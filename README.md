@@ -1,256 +1,304 @@
-# Plan de trabajo — Sistema de Encomiendas y Envíos Express
+# Sistema de Encomiendas y Envíos Express (Logística & Courier)
 
-Curso: Desarrollo de Aplicaciones Web II (4697) · Equipo de 5 · Stack: Spring Boot 3 + MySQL + Angular 21
+Proyecto final de **Desarrollo de Aplicaciones Web II (4697)** · Grupo 7 · 5 integrantes
+Stack: **Spring Boot 3.2 (Java 17, Gradle) · MySQL · Kafka · RabbitMQ · Spring Cloud (Eureka, Gateway, Feign) · Angular 21**
 
-> Este documento sale del análisis de: `base del proyecto grupal.md`, `plan de proyecto.pdf`, `ficha tecnica del proyecto.pdf`, los proyectos `DAWII-T1`, `DAWII-T2`, `DESARROLLO-DE-APLICACIONES-WEB-II-04697-` y el frontend `hospital_web`.
+Sistema para una empresa de paquetería: un **operador** registra y despacha encomiendas y un **cliente** consulta el seguimiento de sus envíos.
+
+> 📄 Contrato completo de endpoints, JSON, eventos y reglas de negocio: **[`docs/API-CONTRATO.md`](docs/API-CONTRATO.md)**. Léelo antes de empezar.
 
 ---
 
-## 1. Qué exige el curso (lo que se califica)
+## 1. Qué se evalúa (parte técnica)
 
 | Evaluación | Qué piden | Puntos |
 |---|---|---|
-| **AP1 (semana 11, ≥50 %)** | Servicio REST **login** (usuario y password en BD, password con **BCrypt**) **con validaciones** | 6 |
-| | **Pruebas de la capa de datos**: insertar, actualizar, eliminar **y listar** (las 4 para el puntaje máximo) | 6 |
-| | Parte formal: SEPTE (≥3 variables), objetivos SMART, justificación + beneficiarios, conclusiones | 8 |
-| **SP1 (semana 14, 100 %)** | Servicios REST con **GET, POST, PUT y DELETE** | 6 |
-| | Angular que **consume todos** los servicios REST | 6 |
-| | Informe (60 %) + sustentación (40 %) | — |
+| **AP1** (semana 11, ≥50 %) | Servicio REST **login** con usuario/clave en BD y password con **BCrypt**, **con validaciones** | 6 |
+| | **Pruebas de la capa de datos**: insertar, actualizar, eliminar **y listar** (las 4) | 6 |
+| **Final** (semana 14, 100 %) | Servicios REST con **GET, POST, PUT y DELETE** | 6 |
+| | Angular que **consume todos** los servicios y persiste en BD | 6 |
 
-**Entregables finales** (en un zip): informe `.docx` (A4, Arial 11, interlineado simple, márgenes 3 cm sup/inf y 2.5 cm izq/der), presentación `.ppt`, carpeta del aplicativo y **video demo de 3–5 min**.
-
-### Puntos de atención
-1. **Las pruebas deben cubrir las 4 operaciones**, no solo "buscar por tracking y actualizar estado" como dice la base. Hay que añadir insertar, eliminar y listar a `EnvioRepositoryTest`.
-2. **DELETE tiene que existir de verdad** (la rúbrica pide los 4 verbos). "Anular envío" = `DELETE /envios/{id}`, permitido solo si el estado es `RECEPCIONADO`.
-3. La **ficha técnica** menciona como tema "Ecommerce (tienda virtual)". La propuesta de encomiendas es distinta: conviene confirmar con el docente que el tema está aceptado, o encuadrarlo como "seguimiento de las ventas de un ecommerce" en la justificación.
-4. El **login del frontend es simulado**: `core/service/login.service.ts` valida contra usuarios en memoria y genera un JWT falso. Hay que reemplazarlo por un `POST /auth/login` real.
-5. "Tiempo real" no está en la rúbrica. Con RabbitMQ el historial se registra de forma asíncrona y el cliente lo ve al consultar/refrescar. **No usar WebSockets/SignalR.**
+Kafka, RabbitMQ, Gateway, Eureka y Feign son el valor añadido de la propuesta (se priorizan después del núcleo).
 
 ---
 
-## 2. Qué se reutiliza de cada proyecto
+## 2. Arquitectura
 
-| Necesidad | Fuente | Qué se toma |
+```
+Angular (courier-web :4200) ──► API Gateway :8762 ──┬─► courier-service :8083  (auth + usuarios + envíos)  ── MySQL courier_db
+                                                    └─► tracking-service :8084 (historial + notificaciones) ── MySQL tracking_db
+                                  Eureka :8761 (registro de servicios)
+courier-service publica al cambiar el estado de un envío:
+   ├─ Kafka    tópico  tracking-status       → tracking-service: historial-cg (guarda historial) + audit-cg (auditoría)
+   └─ RabbitMQ cola    notificaciones.envio  → tracking-service: crea la Notificacion del cliente
+```
+
+**Fases** (si falta tiempo se recorta de abajo hacia arriba sin perder puntos de rúbrica):
+
+| Fase | Contenido | Rúbrica |
 |---|---|---|
-| Login, JWT, BCrypt, roles | `backend/jwt-sales-services` | `SecurityConfig`, `JwtService`, `JwtAuthenticationFilter`, `AuthController`, `AuthService`, `AppUser`, `AppUserRepository`, DTOs de login, `application.yml` (MySQL, puerto, secret) |
-| Capas y CRUD | mismo proyecto (`entidades / repositorio / negocio / rest / dto / config`) | Patrón completo de `Customer` y `Sale` → molde para `Envio` |
-| Datos iniciales | `config/SaleDataInitializer.java` | Molde para crear usuarios y envíos de prueba |
-| Mensajería | `DAWII-T1/ms-recargas/rabbitmq/*` (más simple que Kafka) y `products-services/rabbitmq` | `RabbitMQConfig`, `Producer`, `Event` → `TrackingStatusEvent` |
-| Consumidor / auditoría | `products-services/kafka/StockAuditConsumer` | Idea del consumidor que registra historial |
-| Feign | `DAWII-T1/ms-recargas/client/TarjetaClient`, `DAWII-T2/ms-resolucion/client/ReclamoClient` | Cliente Feign de tracking → courier |
-| Gateway + Eureka | `spring_cloud/api-gateway`, `spring_cloud/eureka-server` | Copiar y cambiar rutas |
-| Docker (MySQL, RabbitMQ) | `DAWII-T1/docker`, `queue/docker-compose-rabbitmq.yml` | Un único `docker-compose.yml` |
-| Colección Postman | carpetas `postman/` | Molde |
-| Frontend | `frontend/hospital_web` (Angular 21 + Material + Bootstrap, standalone, zoneless, HashLocationStrategy) | Plantilla "cliniva": layout, sidebar, auth guard, interceptor |
+| **A — Núcleo** | `courier-service` (login + CRUD envíos + tests) + Angular consumiendo todo, sin pasar por el gateway | ✅ cubre el 100 % técnico |
+| **B — Eventos** | Kafka + RabbitMQ + `tracking-service` + pantallas de seguimiento y notificaciones | valor extra |
+| **C — Infra** | Eureka + API Gateway + Feign | valor extra |
 
-**Decisión: se usan Kafka y RabbitMQ, cada uno con un rol distinto** (igual que `products-services`, que ya combina ambos):
-- **Kafka** → *stream de eventos de tracking*: tópico `tracking-status` con `TrackingStatusEvent`. Dos consumidores con grupos distintos (`historial-cg` guarda el historial, `audit-cg` registra auditoría). Molde: `products-services/kafka/*`.
-- **RabbitMQ** → *mensajes de trabajo puntuales*: cola de notificaciones al cliente cuando su envío pasa a `ENTREGADO` o `DEVUELTO`. Molde: `ms-recargas/rabbitmq/*` y `products-services/rabbitmq/*`.
-
-Ambos se levantan con Docker, así que el `docker-compose.yml` incluye MySQL + Kafka + RabbitMQ.
-
----
-
-## 3. Arquitectura propuesta (simple)
+### Estructura del repositorio
 
 ```
-Angular (courier-web) ──► API Gateway :8762 ──┬─► courier-service :8083  (auth + usuarios + envíos)  ── MySQL
-                                              └─► tracking-service :8084 (historial)                 ── MySQL
-                              Eureka :8761         ▲
-                       courier-service publica:    │
-                         ├─ Kafka  (tópico tracking-status)  → tracking-service: historial-cg (historial) + audit-cg (auditoría)
-                         └─ RabbitMQ (cola notificaciones)   → tracking-service: guarda Notificacion al cliente
-```
-
-### Prioridad por fases (si falta tiempo, se recorta de abajo hacia arriba sin perder puntos de rúbrica)
-
-| Fase | Contenido | ¿Cubre la rúbrica? |
-|---|---|---|
-| **A — Núcleo** | `courier-service` (login BCrypt/JWT + CRUD Envíos) + Angular consumiendo todo | **Sí, 100 % de la parte técnica** |
-| **B — Eventos** | `tracking-service` + Kafka (historial/auditoría) + RabbitMQ (notificaciones) + pantalla de seguimiento | Valor extra |
-| **C — Infra** | Eureka + API Gateway + Feign | Valor extra |
-
-### Modelo de datos
-
-- **AppUser**: `id, username, password (BCrypt), nombre, email, rol (ROLE_OPERADOR | ROLE_CLIENTE)`
-- **Envio**: `id, codigoTracking (EN-AAAA-000001), remitenteId (→ AppUser), destinatarioNombre, direccionDestino, pesoKg, costoEnvio, estado (RECEPCIONADO | EN_RUTA | ENTREGADO | DEVUELTO), fechaRegistro`
-- **HistorialTracking** (tracking-service, vía Kafka): `id, codigoTracking, estado, fecha, usuario`
-- **Notificacion** (tracking-service, vía RabbitMQ): `id, codigoTracking, destinatarioId, mensaje, fecha, leida`
-
-Reglas: `costoEnvio` = tarifa base + pesoKg × tarifa por kg (calculado en el servicio). Transiciones válidas: `RECEPCIONADO → EN_RUTA → ENTREGADO | DEVUELTO`. Un cliente solo ve envíos donde `remitenteId` es él.
-
-### Contrato de API (acordar ya para trabajar en paralelo)
-
-| Método | Ruta | Rol | Notas |
-|---|---|---|---|
-| POST | `/auth/login` | público | Respuesta con la forma que ya espera el front: `{ token, user:{ id, username, name, email, roles:[{name,priority}], permissions:[] } }` |
-| POST | `/users` | público | Registro de cliente |
-| GET | `/envios` | OPERADOR todos / CLIENTE los suyos | Filtro opcional `?estado=` |
-| GET | `/envios/{id}` | ambos | |
-| GET | `/envios/tracking/{codigo}` | ambos | |
-| POST | `/envios` | OPERADOR | Validado con `@Valid` |
-| PUT | `/envios/{id}` | OPERADOR | Edita datos |
-| PATCH | `/envios/{id}/estado` | OPERADOR | Publica evento si pasa a EN_RUTA / ENTREGADO |
-| DELETE | `/envios/{id}` | OPERADOR | Anular; solo si `RECEPCIONADO` |
-| GET | `/tracking/{codigo}/historial` | ambos | tracking-service |
-| GET | `/notificaciones` | CLIENTE | tracking-service; las del usuario del JWT |
-| PATCH | `/notificaciones/{id}/leida` | CLIENTE | |
-
-Errores uniformes: `{ status, message, errors[] }` con `@RestControllerAdvice` (400 validación, 401, 403, 404, 409 transición inválida).
-
-Evento de tracking (Kafka, `record`): `TrackingStatusEvent(codigoTracking, estado, remitenteId, usuario, timestamp)`. Evento de notificación (RabbitMQ): `EnvioNotificacionEvent(codigoTracking, remitenteId, estado, mensaje)`.
-
-Convenciones: paquete `com.cibertec.courierservice`, carpetas `entidades / repositorio / negocio / rest / dto / security / config` (igual que el curso), Java 17, Gradle, MySQL en el puerto 5510.
-
----
-
-## 4. Estructura del repositorio
-
-```
-courier-express/
+EF-DAWII-G7/
 ├─ backend/
-│  ├─ courier-service/
-│  ├─ tracking-service/
-│  ├─ eureka-server/
-│  └─ api-gateway/
-├─ frontend/courier-web/        ← copia de hospital_web adaptada
-├─ docker/docker-compose.yml    ← MySQL + RabbitMQ (+ phpMyAdmin)
-├─ postman/
-├─ docs/                        ← informe, ppt, diagramas, video
-├─ .gitignore                   ← build/, .gradle/, node_modules/, .idea/, bin/, *.env
-└─ README.md                    ← cómo levantar todo
+│  ├─ courier-service/     Spring Boot (Gradle) · puerto 8083 · auth, usuarios, envíos
+│  ├─ tracking-service/    Spring Boot (Gradle) · puerto 8084 · historial y notificaciones
+│  ├─ eureka-server/       Spring Cloud (Maven) · puerto 8761
+│  └─ api-gateway/         Spring Cloud (Maven) · puerto 8762
+├─ frontend/
+│  └─ courier-web/         Angular 21 (copia de la plantilla hospital_web, por adaptar)
+├─ docker/docker-compose.yml   MySQL + phpMyAdmin + Kafka + Kafka UI + RabbitMQ
+├─ postman/                    colecciones por rol
+├─ docs/API-CONTRATO.md        contrato de API, eventos, reglas y datos
+└─ .github/pull_request_template.md
 ```
 
-### Flujo de Git
-- `main` protegida: nadie hace push directo, todo entra por **Pull Request** que revisa el coordinador.
-- Ramas: `feature/<area>-<tarea>` (ej. `feature/envios-crud`, `feature/front-login`).
-- Commits cortos y en presente: `agrega EnvioRepositoryTest`, no "cambios".
-- Un PR = una tarea de la lista de abajo. Se marca la casilla del checklist al fusionar.
-- El coordinador responde con *Request changes* en el PR y el autor corrige en la misma rama.
-- No subir `build/`, `.gradle/`, `node_modules/`, claves ni `.env` reales.
+Dentro de cada servicio: `entidades / repositorio / negocio / rest / dto / security / config` (+ `kafka`, `rabbitmq`, `client` donde aplica), igual que los proyectos del curso.
+
+### Qué ya viene hecho (esqueleto)
+- Los 4 proyectos backend **compilan** y tienen `build.gradle`/`pom.xml` con **todas las dependencias ya declaradas** (nadie debe editarlos), `application.yml` con MySQL, Kafka, RabbitMQ, JWT y Eureka configurados, y la clase `Application`.
+- `courier-service` y `tracking-service` tienen los **records de eventos** (`TrackingStatusEvent`, `EnvioNotificacionEvent`) y los **stubs** `TrackingProducer` y `NotificacionProducer`: el Rol 2 ya puede llamarlos y los Roles 3 y 4 solo rellenan el cuerpo.
+- `api-gateway` ya tiene las rutas y CORS; `eureka-server` está listo.
+- `docker-compose.yml` completo y `frontend/courier-web` con la plantilla copiada.
+- Los directorios vacíos tienen un `.gitkeep` (bórralo al crear tu primer archivo ahí).
 
 ---
 
-## 5. Reparto de tareas
+## 3. Cómo levantar el entorno
 
-**Coordinador (tú):** todo el **frontend** (`courier-web`), la revisión de PRs, el armado final del informe y la integración. Los 4 integrantes restantes se reparten el **backend** y las secciones del informe. Ellos no tocan `frontend/`.
+Requisitos: **JDK 17+**, **Docker Desktop**, **Node 20+** y Angular CLI.
 
-> Como el front depende del back, el contrato de API (sección 3) es lo primero que se congela, y cada integrante entrega a tu equipo una colección Postman de lo suyo para que puedas conectar el front sin esperar.
+```bash
+# 1) Infraestructura (MySQL, Kafka, RabbitMQ)
+cd docker && docker compose up -d
 
-### Coordinador — Frontend completo + revisión
-**Técnico**
-- [ ] Copiar `hospital_web` → `frontend/courier-web`; renombrar la app (título, logo, textos); limpiar sidebar (Dashboard, Envíos, Seguimiento, Notificaciones, Cerrar sesión).
-- [ ] `environment.ts` con `apiUrl` hacia el gateway (o `:8083` en Fase A).
-- [ ] **Reemplazar `LoginService` simulado** por `POST /auth/login` respetando la forma de respuesta; interceptor con `Authorization: Bearer`.
-- [ ] `Role`: `ADMIN/DOCTOR/PATIENT` → `OPERADOR/CLIENTE`; rutas `/operador` y `/cliente`; `AuthGuard` y redirección post-login por rol.
-- [ ] Registro de cliente (`signup` → `POST /users`).
-- [ ] **Operador:** `EnvioService` Angular con los 4 verbos, formulario reactivo de encomienda, tabla `mat-table` con **badges de colores** por estado, cambio de estado y **modal de confirmación al anular**.
-- [ ] **Cliente:** "Mis envíos", consulta de seguimiento por código con línea de tiempo (historial) y campana de notificaciones.
-- [ ] Snackbars de éxito/error y pruebas manuales end-to-end.
-- [ ] Revisar PRs (checklist de la sección 7) y dar feedback.
+# 2) Backend (una terminal por servicio, en este orden si usas Fase C)
+cd backend/eureka-server   && ./mvnw spring-boot:run      # opcional hasta la Fase C
+cd backend/courier-service && ./gradlew bootRun
+cd backend/tracking-service && ./gradlew bootRun
+cd backend/api-gateway     && ./mvnw spring-boot:run      # opcional hasta la Fase C
 
-**Informe:** armado y formato final del `.docx` (carátula, Arial 11, márgenes), Resumen y Productos/entregables.
+# 3) Frontend
+cd frontend/courier-web && npm install && npm start       # http://localhost:4200
+```
 
-### Integrante 1 — Base del repo + Seguridad (login)
-- [ ] Crear `courier-service` copiando `jwt-sales-services`: `AppUser`, `AppUserRepository`, `JwtService`, `JwtAuthenticationFilter`, `SecurityConfig` (**BCrypt**), `AuthController`, `AuthService`.
-- [ ] `LoginResponse` con la forma `{ token, user:{ id, username, name, email, roles:[{name,priority}], permissions } }` (la que ya espera el front).
-- [ ] Validaciones del login (`@NotBlank`, `@Size`), 401 con mensaje claro, `@RestControllerAdvice` global (400/401/403/404/409).
-- [ ] `POST /users` (registro con rol `ROLE_CLIENTE`) y `DataInitializer` con 1 operador y 2 clientes.
-- [ ] CORS para `http://localhost:4200`.
-- [ ] `AppUserRepositoryTest` (guardar, buscar por username, eliminar, listar) + test de `AuthService` (BCrypt, credenciales inválidas).
-- [ ] Subir el esqueleto a `main` en las primeras 48 h para que los demás ramifiquen.
-- [ ] Colección Postman de auth/usuarios.
+- Sin Eureka corriendo, los servicios arrancan igual (solo muestran avisos); el gateway sí lo necesita.
+- Las bases `courier_db` y `tracking_db` se crean solas al arrancar cada servicio.
+- Los tests de repositorio usan **H2 en memoria**: se ejecutan con `./gradlew test` sin Docker.
+- Si Maven falla por espacios en la ruta del proyecto, mueve el repo a una ruta sin espacios.
 
-**Informe:** Introducción y Definición y alcance.
-
-### Integrante 2 — Backend Envíos (CRUD) + pruebas AP1
-- [ ] `Envio` + `EstadoEnvio`, `EnvioRepository` (`findByCodigoTracking`, `findByRemitenteId`, `findByEstado`).
-- [ ] `EnvioService`: generar `codigoTracking`, calcular `costoEnvio`, validar transiciones (`RECEPCIONADO → EN_RUTA → ENTREGADO | DEVUELTO`), limitar al cliente a sus envíos (usuario del JWT).
-- [ ] `EnvioController`: GET (lista, por id, por tracking), POST, PUT, PATCH estado, DELETE (solo `RECEPCIONADO`).
-- [ ] DTOs con validaciones (`pesoKg > 0`, destinatario y dirección obligatorios).
-- [ ] **`EnvioRepositoryTest` con `@DataJpaTest` + H2**: **insertar, actualizar, eliminar, listar** y búsqueda por tracking (6/12 de la parte técnica de AP1).
-- [ ] `EnvioServiceTest` (Mockito): costo y transiciones inválidas.
-- [ ] Colección Postman de envíos.
-
-**Informe:** Diagnóstico **SEPTE** (Social, Económica y Tecnológica como mínimo) con estadísticas y fuentes citadas en pie de página.
-
-### Integrante 3 — Kafka + tracking-service (historial y auditoría)
-- [ ] `docker/docker-compose.yml`: MySQL + Kafka (tomar de `queue/docker-compose-kafka.yml`).
-- [ ] En `courier-service`: `TrackingStatusEvent` (record), `TrackingProducer` con `KafkaTemplate`, tópico `tracking-status`; se publica cuando el estado pasa a `EN_RUTA` o `ENTREGADO` (coordinar el punto de llamada con el integrante 2).
-- [ ] Crear `tracking-service`: entidad `HistorialTracking`, repositorio, `HistorialConsumer` (`@KafkaListener`, grupo `historial-cg`) y `AuditConsumer` (grupo `audit-cg`, log), basados en `products-services/kafka`.
-- [ ] `GET /tracking/{codigo}/historial`.
-- [ ] **Feign** hacia courier-service para devolver historial + datos del envío (molde: `ms-recargas/client/TarjetaClient`).
-- [ ] `HistorialTrackingRepositoryTest`.
-- [ ] Colección Postman de tracking.
-
-**Informe:** Objetivos (≥2, **SMART**) y Justificación (impacto y beneficiarios directos e indirectos).
-
-### Integrante 4 — RabbitMQ + notificaciones + infraestructura (Gateway/Eureka)
-- [ ] `docker-compose.yml`: añadir RabbitMQ (de `queue/docker-compose-rabbitmq.yml`).
-- [ ] En `courier-service`: `RabbitMQConfig`, `EnvioNotificacionEvent` y `NotificacionProducer`; se envía cuando el estado pasa a `ENTREGADO` o `DEVUELTO` (molde: `ms-recargas/rabbitmq`).
-- [ ] En `tracking-service`: entidad `Notificacion`, repositorio, `NotificacionConsumer` (`@RabbitListener`), `GET /notificaciones` (filtrado por usuario del JWT) y `PATCH /notificaciones/{id}/leida`. Coordinar con el integrante 3 porque ambos tocan `tracking-service`: el 3 crea el proyecto y el 4 añade su paquete `rabbitmq/`.
-- [ ] `eureka-server` y `api-gateway` (copiar de `spring_cloud`): rutas `/auth/**`, `/users/**`, `/envios/**` → courier; `/tracking/**`, `/notificaciones/**` → tracking. CORS en el gateway.
-- [ ] `NotificacionRepositoryTest`.
-- [ ] README de cómo levantar todo con Docker y orden de arranque.
-
-**Informe:** Conclusiones (máx. 3), Recomendaciones (máx. 3), Glosario, Bibliografía; además la **presentación `.ppt`** y el **video demo (3–5 min)** (grabando la demo con el front del coordinador).
+URLs útiles: phpMyAdmin <http://localhost:3410> · Kafka UI <http://localhost:8090> · RabbitMQ <http://localhost:15672> (guest/guest) · Eureka <http://localhost:8761>.
 
 ---
 
-## 6. Cronograma por sprints
+## 4. Flujo de trabajo en Git
 
-### Sprint 1 — Hasta AP1 (semana 11)
+1. `main` solo recibe código por **Pull Request**; el coordinador revisa y fusiona. Nadie hace push directo a `main`.
+2. Ramas: `feature/rolN-descripcion` (ej. `feature/rol2-envio-crud`). Parte siempre de `main` actualizada (`git pull`).
+3. **Un PR = una tarea** de tu lista (PRs pequeños se revisan rápido). Usa la plantilla del PR.
+4. Si el coordinador pide cambios, corrige **en la misma rama** y haz push; el PR se actualiza solo.
+5. Commits cortos y descriptivos en presente: `agrega EnvioRepositoryTest`, no `cambios`.
+6. No subir `build/`, `.gradle/`, `node_modules/`, claves ni `.env` (el `.gitignore` ya los cubre).
+7. Marca tus casillas `[x]` de este README en el mismo PR en que completas la tarea.
+
+### Reglas para no pisarse
+- **Cada rol edita solo sus archivos** (ver "Archivos" en cada rol). Si necesitas tocar algo de otro rol, pídeselo o avisa en el PR.
+- Archivos compartidos que **nadie edita sin avisar**: `build.gradle`, `pom.xml`, `application.yml`, `docs/API-CONTRATO.md`, `docker-compose.yml` (los dueños de cada uno están indicados abajo).
+- Los records de eventos son un contrato: no cambiar campos sin avisar.
+- El **frontend** es exclusivo del coordinador.
+
+---
+
+## 5. Roles del equipo
+
+Hay **5 roles de backend/infra**. Cada integrante elige **uno**. Además, el **coordinador hace todo el frontend** (sección 6) encima de su rol.
+
+| Rol | Responsabilidad | Integrante (completar) |
+|---|---|---|
+| **Rol 1** | Seguridad: login BCrypt/JWT, usuarios | |
+| **Rol 2** | Envíos: CRUD, reglas y **pruebas AP1** | |
+| **Rol 3** | Kafka: productor, historial, auditoría, Feign | |
+| **Rol 4** | RabbitMQ: notificaciones y seguridad en tracking-service | |
+| **Rol 5** | Integración: Gateway/Eureka, datos de demo, Postman global, QA | |
+
+> 💡 **Recomendación para el coordinador:** tomar el **Rol 5**. El esqueleto de Gateway/Eureka/Docker ya viene hecho, así que es el rol más liviano y el que mejor conecta con el trabajo del frontend.
+
+### Dependencias entre roles (quién desbloquea a quién)
+
+```
+Rol 1 (login + base)  ──►  Rol 2 (envíos usan el usuario del token)  ──►  Rol 5 (datos demo, QA)
+                                │
+                                ├─ llama a TrackingProducer  (Rol 3 rellena el cuerpo)
+                                └─ llama a NotificacionProducer (Rol 4 rellena el cuerpo)
+Rol 3 (tracking-service: historial) ──► Rol 4 (suma notificaciones en el mismo servicio)
+```
+Nadie queda bloqueado: los stubs permiten compilar desde el día 1. Mientras el login no esté listo, los demás pueden probar con la seguridad abierta en su rama local (sin subirlo).
+
+---
+
+### Rol 1 — Seguridad: login BCrypt / JWT (AP1: 6 pts)
+
+**Archivos:** `courier-service` → `security/`, `entidades/AppUser`, `repositorio/AppUserRepository`, `negocio/AuthService`, `negocio/UserService`, `rest/AuthController`, `rest/UserController`, `dto/Login*`, `dto/User*`, `config/DataInitializer` (usuarios), manejador global de errores.
+**Molde:** `backend/jwt-sales-services` del repo del curso (`SecurityConfig`, `JwtService`, `JwtAuthenticationFilter`, `AuthController`, `AuthService`, `AppUser`).
+
+- [ ] `AppUser` (id, username único, password, nombre, email, rol `ROLE_OPERADOR` | `ROLE_CLIENTE`) y `AppUserRepository` (`findByUsername`, `existsByUsername`).
+- [ ] `SecurityConfig`: stateless, `BCryptPasswordEncoder`, públicos solo `POST /auth/login` y `POST /users`; el resto autenticado. Autorización por rol para que el Rol 2 use `hasRole`/`@PreAuthorize`.
+- [ ] `JwtService` + `JwtAuthenticationFilter` (el token lleva `userId`, `username` y rol; la expiración sale de `app.jwt.expiration-minutes`).
+- [ ] `POST /auth/login` con `LoginRequest` validado (`@NotBlank`, `@Size`) y `LoginResponse` **con la forma exacta** de `docs/API-CONTRATO.md` (`token` + `user.roles[{name,priority}]` + `permissions`) — el front depende de ella.
+- [ ] `POST /users`: registro de cliente (rol siempre `ROLE_CLIENTE`), contraseña guardada con BCrypt, 409 si el usuario existe.
+- [ ] `@RestControllerAdvice` global con el formato de error `{status,message,errors[]}` (400 validación, 401, 403, 404, 409). Lo usan todos los roles.
+- [ ] **CORS** para `http://localhost:4200` (valor en `app.cors.allowed-origin`).
+- [ ] `DataInitializer` con `operador/operador123`, `cliente1/cliente123`, `cliente2/cliente123` (passwords con BCrypt).
+- [ ] **Tests** (`src/test`): `AppUserRepositoryTest` con `@DataJpaTest` (guardar, buscar por username, eliminar, listar) y `AuthServiceTest` (login correcto, clave incorrecta, usuario inexistente, BCrypt no guarda texto plano).
+- [ ] Colección Postman `postman/rol1-auth.json`.
+- [ ] ⏱️ **Entregar primero**: subir a `main` en las primeras 48 h el login funcionando (aunque falten tests) para destrabar al resto.
+
+### Rol 2 — Envíos: CRUD, reglas de negocio y pruebas (AP1: 6 pts + final: 6 pts)
+
+**Archivos:** `courier-service` → `entidades/Envio`, `entidades/EstadoEnvio`, `repositorio/EnvioRepository`, `negocio/EnvioService`, `rest/EnvioController`, `dto/Envio*`.
+**Molde:** `jwt-sales-services` (`Customer`, `Sale`, `CustomerService`, `CustomerController`).
+
+- [ ] `Envio` + enum `EstadoEnvio` (`RECEPCIONADO, EN_RUTA, ENTREGADO, DEVUELTO`) según el modelo de datos del contrato; `fechaRegistro` automática.
+- [ ] `EnvioRepository`: `findByCodigoTracking`, `findByRemitenteId`, `findByEstado`, `existsByCodigoTracking`.
+- [ ] `EnvioService`: generar `codigoTracking` (`EN-AAAA-000001`), calcular `costoEnvio`, validar transiciones (409 si no es válida), restringir al CLIENTE a sus envíos (id del usuario autenticado).
+- [ ] `EnvioController` con los **4 verbos**: `GET` (lista con `?estado=`, por id, por tracking), `POST`, `PUT`, `PATCH /{id}/estado`, `DELETE /{id}` (solo `RECEPCIONADO`; 204). Permisos por rol según el contrato.
+- [ ] DTOs con validaciones: `destinatarioNombre` y `direccionDestino` obligatorios, `pesoKg > 0`.
+- [ ] Al registrar y al cambiar de estado: llamar a `TrackingProducer.publicar(...)` (Kafka) y, si el estado es `ENTREGADO` o `DEVUELTO`, a `NotificacionProducer.publicar(...)` (RabbitMQ). Ver la tabla de eventos en el contrato.
+- [ ] **`EnvioRepositoryTest`** con `@DataJpaTest` + H2 — **imprescindible para AP1, deben estar las 4 operaciones**:
+  - [ ] insertar (guardar y verificar id y datos)
+  - [ ] actualizar (cambiar estado/datos y verificar persistencia)
+  - [ ] eliminar (borrar y verificar que ya no existe)
+  - [ ] listar (`findAll`, `findByEstado`, `findByRemitenteId`)
+  - [ ] buscar por `codigoTracking` (existente e inexistente)
+- [ ] `EnvioServiceTest` (Mockito): costo calculado, transición válida, transición inválida, DELETE rechazado si no está `RECEPCIONADO`.
+- [ ] Colección Postman `postman/rol2-envios.json`.
+
+### Rol 3 — Kafka: eventos de tracking, historial y auditoría (final)
+
+**Archivos:** `courier-service` → `kafka/TrackingProducer` (rellenar el stub). `tracking-service` → `kafka/`, `entidades/HistorialTracking`, `repositorio/HistorialTrackingRepository`, `negocio/HistorialService`, `rest/TrackingController`, `client/` (Feign), `dto/Historial*`, `TrackingServiceApplication` (solo para `@EnableFeignClients`).
+**Molde:** `products-services/kafka` (`StockMovementEvent`, `StockAuditConsumer`, `StockUpdateConsumer`) y `DAWII-T1/ms-recargas/client/TarjetaClient` (Feign).
+
+- [ ] Verificar que Kafka y MySQL levantan con `docker compose up -d` (ver el compose; corregir si hace falta y avisar).
+- [ ] `TrackingProducer`: reemplazar el stub por `KafkaTemplate<String, TrackingStatusEvent>` enviando al tópico `app.kafka.topic-tracking` con clave = `codigoTracking`. Mantener la firma `publicar(TrackingStatusEvent)`.
+- [ ] `tracking-service`: `HistorialTracking` + repositorio (`findByCodigoTrackingOrderByFechaAsc`).
+- [ ] `HistorialConsumer` con `@KafkaListener(topics = "tracking-status", groupId = "historial-cg")` que guarda el historial.
+- [ ] `AuditConsumer` con `groupId = "audit-cg"` que registra el evento en el log (como `StockAuditConsumer`).
+- [ ] `GET /tracking/{codigo}/historial`: devuelve el envío (consultado por **Feign** a `courier-service` `GET /envios/tracking/{codigo}`, reenviando el token `Authorization`) + el historial.
+- [ ] Cliente Feign con `@FeignClient(name = "courier-service")` y fallback/mensaje claro si courier no responde.
+- [ ] **Tests:** `HistorialTrackingRepositoryTest` (`@DataJpaTest`: guardar, listar por código ordenado, eliminar) y prueba del `HistorialService`.
+- [ ] Probar el flujo completo: cambiar estado de un envío → mensaje visible en Kafka UI → fila en `historial_tracking`.
+- [ ] Colección Postman `postman/rol3-tracking.json`.
+
+### Rol 4 — RabbitMQ: notificaciones y seguridad de tracking-service (final)
+
+**Archivos:** `courier-service` → `rabbitmq/` (rellenar `NotificacionProducer`, crear `RabbitMQConfig`). `tracking-service` → `rabbitmq/` (`RabbitMQConfig`, `NotificacionConsumer`), `entidades/Notificacion`, `repositorio/NotificacionRepository`, `negocio/NotificacionService`, `rest/NotificacionController`, `dto/Notificacion*`, `security/` y `config/SecurityConfig`.
+**Molde:** `DAWII-T1/ms-recargas/rabbitmq` (`RabbitMQConfig`, `RecargaProducer`) y `products-services/rabbitmq`.
+
+- [ ] `RabbitMQConfig` en ambos servicios: cola `notificaciones.envio` durable y `Jackson2JsonMessageConverter`.
+- [ ] `NotificacionProducer`: reemplazar el stub por `RabbitTemplate.convertAndSend` del `EnvioNotificacionEvent` (mantener la firma `publicar(...)`).
+- [ ] `tracking-service`: `Notificacion` (+ repositorio), `NotificacionConsumer` con `@RabbitListener` que guarda la notificación para el `remitenteId`.
+- [ ] `GET /notificaciones` (solo las del usuario del token, más recientes primero) y `PATCH /notificaciones/{id}/leida` (403 si no es suya).
+- [ ] **Seguridad en tracking-service:** copiar `JwtService` y `JwtAuthenticationFilter` de `courier-service` **solo para validar** el token (mismo `app.jwt.secret`); reemplazar el `SecurityConfig` provisional exigiendo autenticación en `/tracking/**` y `/notificaciones/**`. Coordinar con el Rol 3: ambos trabajan en el mismo servicio, así que el Rol 3 sube primero su estructura y el Rol 4 hace `git pull` antes de crear la suya.
+- [ ] **Tests:** `NotificacionRepositoryTest` (`@DataJpaTest`: guardar, listar por destinatario, marcar leída/actualizar, eliminar) y prueba del `NotificacionService`.
+- [ ] Probar el flujo: pasar un envío a `ENTREGADO` → mensaje en la consola de RabbitMQ → fila en `notificacion`.
+- [ ] Colección Postman `postman/rol4-notificaciones.json`.
+
+### Rol 5 — Integración: Gateway, Eureka, datos de demo y QA (final)
+
+**Archivos:** `backend/api-gateway`, `backend/eureka-server`, `docker/`, `postman/` (colección global), `config/EnvioDataInitializer` en courier-service, `README`/`docs`.
+**Molde:** `spring_cloud/api-gateway` y `spring_cloud/eureka-server` del repo del curso.
+
+- [ ] Arrancar `eureka-server` y `api-gateway` (ya traen configuración) y verificar que `courier-service` y `tracking-service` aparecen registrados en <http://localhost:8761>.
+- [ ] Verificar y ajustar las rutas del gateway: `/auth/**`, `/users/**`, `/envios/**` → courier · `/tracking/**`, `/notificaciones/**` → tracking. Comprobar que **CORS no se duplica** (service + gateway) y que el header `Authorization` pasa.
+- [ ] Probar que un `POST /auth/login` por el gateway (`:8762`) devuelve el mismo resultado que directo a `:8083`.
+- [ ] `EnvioDataInitializer` (cuando el Rol 2 tenga `Envio`): ~8 envíos de ejemplo en distintos estados para las demos y pruebas del front.
+- [ ] **Colección Postman global** `postman/courier-express.postman_collection.json` con variables (`{{baseUrl}}`, `{{token}}`) y un script que guarde el token tras el login; juntar las colecciones de los roles 1–4.
+- [ ] **QA end-to-end**: recorrer el flujo completo (registro → login → crear envío → EN_RUTA → ENTREGADO → historial → notificación → anular un RECEPCIONADO) y abrir un **Issue** en GitHub por cada fallo, indicando el rol responsable.
+- [ ] Verificar el arranque desde cero siguiendo la sección 3 de este README en una máquina limpia y corregir lo que falte.
+- [ ] Revisar que no haya secretos ni archivos de build en el repo.
+
+---
+
+## 6. Frontend — Coordinador (además de su rol)
+
+Todo el trabajo de `frontend/courier-web` es del coordinador. Plantilla base: `hospital_web` (Angular 21 + Material + Bootstrap, standalone, zoneless, `HashLocationStrategy`).
+
+**Adaptación de la plantilla**
+- [ ] Renombrar la app (`package.json` `name`, título en `index.html`, logo y textos "Cliniva"/hospital).
+- [ ] `environments/environment*.ts`: `apiUrl` apuntando a `http://localhost:8083` (Fase A) y luego al gateway `http://localhost:8762`.
+- [ ] Sidebar: dejar Dashboard, Envíos, Seguimiento, Notificaciones y Cerrar sesión; quitar menús y módulos de hospital que no se usen (`multilevel`, `extra-pages`, dashboards de doctor/enfermera).
+
+**Autenticación y roles**
+- [ ] **Reemplazar `core/service/login.service.ts` simulado** (usuarios en memoria + JWT falso) por `HttpClient.post(apiUrl + '/auth/login')`; `AuthService` ya espera `token` y `user.roles[{name,priority}]`.
+- [ ] Interceptor que añade `Authorization: Bearer <token>`; conservar el manejo del 401.
+- [ ] `core/models/role.ts`: `ADMIN/DOCTOR/PATIENT` → `OPERADOR/CLIENTE`; en `app.routes.ts` renombrar `/admin` → `/operador` y `/doctor`+`/patient` → `/cliente`; actualizar `AuthGuard` y la redirección post-login según el rol.
+- [ ] Pantalla de **registro** (`authentication/signup`) conectada a `POST /users`.
+
+**Operador** (consume los 4 verbos: es lo que da los 6 pts de "consume todos")
+- [ ] `EnvioService` de Angular: `GET` lista/uno, `POST`, `PUT`, `PATCH` estado, `DELETE`.
+- [ ] **Formulario reactivo** de registro/edición de encomienda con validaciones y mensajes de error.
+- [ ] **Tabla de envíos** (`mat-table`) con **badges de colores**: RECEPCIONADO gris · EN_RUTA azul · ENTREGADO verde · DEVUELTO naranja; filtro por estado y búsqueda por código.
+- [ ] Acción "Cambiar estado" y **modal de confirmación al anular** (`MatDialog`, solo habilitado en `RECEPCIONADO`).
+
+**Cliente**
+- [ ] "Mis envíos" (tabla con badges) y consulta de seguimiento por código con **línea de tiempo** del historial.
+- [ ] Campana/listado de **notificaciones** con marcar como leída.
+
+**Transversal**
+- [ ] Snackbars de éxito/error, estados de carga, manejo de errores del contrato.
+- [ ] Probar con datos de prueba (`of([...])`) mientras el backend no esté listo; conectar al API real cuando cada rol suba su parte.
+- [ ] Revisar los PRs de los demás (checklist abajo) y dar feedback.
+
+---
+
+## 7. Cronograma
+
+### Sprint 1 — hasta AP1 (semana 11)
 | Quién | Entrega |
 |---|---|
-| Coordinador | Front renombrado + login real + guard por roles; revisar PRs; unir la parte formal |
-| 1 | `courier-service` con login BCrypt/JWT y tests de usuario |
-| 2 | `Envio` + repositorio + **tests de las 4 operaciones** + CRUD básico |
-| 3 | docker-compose con Kafka + borrador de objetivos y justificación |
-| 4 | Conclusiones preliminares, glosario, bibliografía base |
-| Todos | SEPTE, objetivos, justificación y conclusiones **redactados** (8 pts de AP1) |
+| Rol 1 | Esqueleto subido en 48 h + login BCrypt/JWT + validaciones + tests de usuario |
+| Rol 2 | `Envio` + `EnvioRepository` + **tests de las 4 operaciones** + CRUD básico |
+| Rol 3 | Kafka productor/consumidor funcionando en local |
+| Rol 4 | RabbitMQ productor/consumidor funcionando en local |
+| Rol 5 | Gateway/Eureka verificados + Postman con el login |
+| Coordinador | Front renombrado + login real + guards por rol |
 
-### Sprint 2 — Hasta SP1 (semana 14)
+### Sprint 2 — hasta la entrega final (semana 14)
 | Quién | Entrega |
 |---|---|
-| Coordinador | Pantallas de Operador y Cliente conectadas a los 4 verbos; seguimiento y notificaciones |
-| 1 | Pulir validaciones y manejo de errores |
-| 2 | Reglas de negocio completas + tests de servicio |
-| 3 | Kafka productor/consumidores + `tracking-service` + Feign |
-| 4 | RabbitMQ + notificaciones + Gateway/Eureka + PPT + video |
-| Todos | Ensayo de sustentación (cada uno explica su parte) |
+| Rol 1 | Pulido de validaciones y errores; apoyo a quien lo necesite |
+| Rol 2 | Reglas de negocio completas + tests de servicio + permisos por rol |
+| Rol 3 | Historial + auditoría + Feign + tests |
+| Rol 4 | Notificaciones + seguridad en tracking-service + tests |
+| Rol 5 | Datos de demo + Postman global + QA end-to-end |
+| Coordinador | Pantallas de Operador y Cliente conectadas a todos los endpoints |
+| Todos | Ensayo de sustentación: cada uno explica y demuestra su parte |
 
-**Hitos de control:** (1) esqueleto en `main` a las 48 h; (2) contrato de API congelado al final de la primera semana; (3) congelar funcionalidades 3 días antes de la entrega.
-
----
-
-## 7. Cómo trabajar en paralelo sin bloquearse
-
-- El **contrato de API** (sección 3) ya está definido: el front puede usar datos de prueba (`of([...])`) hasta que el back esté listo.
-- El integrante 1 publica pronto el login; hasta entonces el front puede seguir con el simulado.
-- Los tests de `@DataJpaTest` usan H2 y no necesitan Docker ni a los demás servicios.
-- Cada PR debe indicar: qué hace, cómo probarlo y captura/log del resultado.
-
-### Checklist del PR (para tu revisión)
-- [ ] Compila y los tests pasan (`./gradlew test` / `ng build`).
-- [ ] Sigue la estructura de paquetes y nombres acordados.
-- [ ] Sin secretos ni archivos de build en el commit.
-- [ ] Validaciones y códigos HTTP correctos.
-- [ ] El autor puede explicar el código (importante para la sustentación).
+**Hitos:** (1) esqueleto de login en `main` a las 48 h · (2) contrato de API congelado al final de la primera semana · (3) congelar funcionalidades 3 días antes de la entrega y dejar solo corrección de bugs.
 
 ---
 
-## 8. Checklist final contra la rúbrica
+## 8. Checklists
 
-**Parte técnica**
+### Checklist de Pull Request (revisión del coordinador)
+- [ ] Compila y `./gradlew test` pasa (o `ng build` en el front).
+- [ ] Solo toca archivos del rol del autor.
+- [ ] Respeta la estructura de paquetes, los nombres y el contrato de `docs/API-CONTRATO.md`.
+- [ ] Validaciones y códigos HTTP correctos (400/401/403/404/409).
+- [ ] Sin secretos, `build/`, `.gradle/` ni `node_modules/`.
+- [ ] El autor puede explicar su código (se pregunta en la sustentación).
+
+### Checklist técnico final (rúbrica)
 - [ ] Login REST con usuario/clave en BD, **BCrypt** y validaciones
 - [ ] Pruebas de acceso a datos: **insertar, actualizar, eliminar, listar**
 - [ ] REST con **GET, POST, PUT y DELETE**
-- [ ] Angular consume **todos** esos servicios y persiste en BD
-
-**Parte formal**
-- [ ] SEPTE (≥3 variables) con evidencias y pie de página
-- [ ] ≥2 objetivos SMART
-- [ ] Justificación con beneficiarios directos e indirectos
-- [ ] ≤3 conclusiones y ≤3 recomendaciones
-- [ ] Glosario y bibliografía
-- [ ] Informe `.docx` (A4, Arial 11), `.ppt`, aplicativo y video 3–5 min en un zip
+- [ ] Angular consume **todos** los servicios y persiste en BD
+- [ ] Kafka: historial y auditoría funcionando
+- [ ] RabbitMQ: notificaciones funcionando
+- [ ] Gateway + Eureka + Feign funcionando
+- [ ] Arranque desde cero siguiendo este README

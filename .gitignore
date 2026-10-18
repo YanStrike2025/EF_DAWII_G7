@@ -1,0 +1,32 @@
+# Java / Gradle / Maven
+build/
+.gradle/
+bin/
+out/
+target/
+*.class
+*.log
+!gradle/wrapper/gradle-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Angular / Node
+node_modules/
+dist/
+.angular/
+.sass-cache/
+npm-debug.log*
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+.factorypath
+
+# Sistema y secretos
+.DS_Store
+Thumbs.db
+.env
+*.local

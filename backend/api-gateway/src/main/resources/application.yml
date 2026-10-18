@@ -1,0 +1,40 @@
+server:
+  port: 8762
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      # Si el servicio ya devuelve cabeceras CORS, el gateway evita duplicarlas
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:4200"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+      routes:
+        - id: courier-service
+          uri: lb://courier-service
+          predicates:
+            - Path=/auth/**, /users/**, /envios/**
+        - id: tracking-service
+          uri: lb://tracking-service
+          predicates:
+            - Path=/tracking/**, /notificaciones/**
+
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    service-url:
+      defaultZone: http://localhost:8761/eureka/

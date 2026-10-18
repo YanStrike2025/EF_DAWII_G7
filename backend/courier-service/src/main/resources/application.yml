@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: courier-service
+  datasource:
+    url: jdbc:mysql://localhost:5510/courier_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=America/Lima
+    username: app
+    password: password
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+server:
+  port: 8083
+
+app:
+  jwt:
+    # Mismo secret en courier-service y tracking-service (el segundo solo valida el token)
+    secret: "courier-express-jwt-secret-key-2026-minimo-32-caracteres"
+    expiration-minutes: 60
+  cors:
+    allowed-origin: http://localhost:4200
+  kafka:
+    topic-tracking: tracking-status
+  rabbitmq:
+    queue-notificaciones: notificaciones.envio
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
