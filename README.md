@@ -120,7 +120,7 @@ Hay **5 roles de backend/infra**. Cada integrante elige **uno**. Además, el **c
 
 | Rol | Responsabilidad | Integrante (completar) |
 |---|---|---|
-| **Rol 1** | Seguridad: login BCrypt/JWT, usuarios | |
+| **Rol 1** | Seguridad: login BCrypt/JWT, usuarios | Yan Carlos |
 | **Rol 2** | Envíos: CRUD, reglas y **pruebas AP1** | |
 | **Rol 3** | Kafka: productor, historial, auditoría, Feign | |
 | **Rol 4** | RabbitMQ: notificaciones y seguridad en tracking-service | |
@@ -224,7 +224,7 @@ Nadie queda bloqueado: los stubs permiten compilar desde el día 1. Mientras el 
 
 ---
 
-## 6. Frontend — Coordinador (además de su rol)
+## 6. Frontend — Coordinador
 
 Todo el trabajo de `frontend/courier-web` es del coordinador. Plantilla base: `hospital_web` (Angular 21 + Material + Bootstrap, standalone, zoneless, `HashLocationStrategy`).
 
@@ -256,34 +256,7 @@ Todo el trabajo de `frontend/courier-web` es del coordinador. Plantilla base: `h
 
 ---
 
-## 7. Cronograma
-
-### Sprint 1 — hasta AP1 (semana 11)
-| Quién | Entrega |
-|---|---|
-| Rol 1 | Esqueleto subido en 48 h + login BCrypt/JWT + validaciones + tests de usuario |
-| Rol 2 | `Envio` + `EnvioRepository` + **tests de las 4 operaciones** + CRUD básico |
-| Rol 3 | Kafka productor/consumidor funcionando en local |
-| Rol 4 | RabbitMQ productor/consumidor funcionando en local |
-| Rol 5 | Gateway/Eureka verificados + Postman con el login |
-| Coordinador | Front renombrado + login real + guards por rol |
-
-### Sprint 2 — hasta la entrega final (semana 14)
-| Quién | Entrega |
-|---|---|
-| Rol 1 | Pulido de validaciones y errores; apoyo a quien lo necesite |
-| Rol 2 | Reglas de negocio completas + tests de servicio + permisos por rol |
-| Rol 3 | Historial + auditoría + Feign + tests |
-| Rol 4 | Notificaciones + seguridad en tracking-service + tests |
-| Rol 5 | Datos de demo + Postman global + QA end-to-end |
-| Coordinador | Pantallas de Operador y Cliente conectadas a todos los endpoints |
-| Todos | Ensayo de sustentación: cada uno explica y demuestra su parte |
-
-**Hitos:** (1) esqueleto de login en `main` a las 48 h · (2) contrato de API congelado al final de la primera semana · (3) congelar funcionalidades 3 días antes de la entrega y dejar solo corrección de bugs.
-
----
-
-## 8. Checklists
+## 7. Checklists
 
 ### Checklist de Pull Request (revisión del coordinador)
 - [ ] Compila y `./gradlew test` pasa (o `ng build` en el front).
